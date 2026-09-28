@@ -9,12 +9,15 @@ from genlayer import *
 class Verification:
     verification_id: str
     claim: str
+    claim_type: str
     is_verifiable: str
     verification_result: str
     confidence: str
+    evidence: str
+    source_reliability: str
+    cross_reference_score: str
     sources_checked: str
     sources_agreed: str
-    evidence_found: str
     reasoning: str
     fetched_at: str
 
@@ -22,6 +25,8 @@ class Verification:
 class ClaimVerifier(gl.Contract):
     verifications: TreeMap[str, str]
     verification_count: u256
+
+    CLAIM_TYPES = ("FACTUAL", "PREDICTION", "OPINION", "STATISTICAL")
 
     def __init__(self):
         self.verification_count = 0
@@ -34,7 +39,7 @@ class ClaimVerifier(gl.Contract):
             return body.decode("utf-8", errors="replace")
         return str(body)
 
-    def _verify_claim(self, claim: str, sources: list) -> dict:
+    def _verify_claim(self, claim: str, claim_type: str, sources: list) -> dict:
         def gather_and_verify() -> dict:
             fetched = []
             for source in sources:
@@ -51,7 +56,9 @@ class ClaimVerifier(gl.Contract):
                     "is_verifiable": "false",
                     "verification_result": "UNVERIFIABLE",
                     "confidence": "0",
-                    "evidence_found": "none",
+                    "evidence": "{}",
+                    "source_reliability": "0",
+                    "cross_reference_score": "0",
                     "sources_checked": len(sources),
                     "sources_agreed": 0,
                     "reasoning": "No sources could be retrieved.",
@@ -62,13 +69,19 @@ class ClaimVerifier(gl.Contract):
                 parts.append("[Source " + str(i+1) + "] " + r["url"] + ":\n" + r["data"][:500])
             sources_text = "\n".join(parts)
 
-            json_format = chr(123) + chr(34) + "is_verifiable" + chr(34) + ": " + chr(34) + "true" + chr(34) + "|" + chr(34) + "false" + chr(34) + ", " + chr(34) + "verification_result" + chr(34) + ": " + chr(34) + "SUPPORTED" + chr(34) + "|" + chr(34) + "REFUTED" + chr(34) + "|" + chr(34) + "UNVERIFIABLE" + chr(34) + ", " + chr(34) + "confidence" + chr(34) + ": " + chr(34) + "<0-100>" + chr(34) + ", " + chr(34) + "evidence_found" + chr(34) + ": " + chr(34) + "strong" + chr(34) + "|" + chr(34) + "weak" + chr(34) + "|" + chr(34) + "none" + chr(34) + ", " + chr(34) + "reasoning" + chr(34) + ": " + chr(34) + "<text>" + chr(34) + chr(125)
+            json_format = chr(123) + chr(34) + "is_verifiable" + chr(34) + ": " + chr(34) + "true" + chr(34) + "|" + chr(34) + "false" + chr(34) + ", " + chr(34) + "verification_result" + chr(34) + ": " + chr(34) + "SUPPORTED" + chr(34) + "|" + chr(34) + "REFUTED" + chr(34) + "|" + chr(34) + "UNVERIFIABLE" + chr(34) + ", " + chr(34) + "confidence" + chr(34) + ": " + chr(34) + "<0-100>" + chr(34) + ", " + chr(34) + "evidence" + chr(34) + ": " + chr(123) + chr(34) + "<source>" + chr(34) + ": " + chr(34) + "<quote>" + chr(34) + chr(125) + ", " + chr(34) + "source_reliability" + chr(34) + ": " + chr(34) + "<0-100>" + chr(34) + ", " + chr(34) + "cross_reference_score" + chr(34) + ": " + chr(34) + "<0-100>" + chr(34) + ", " + chr(34) + "reasoning" + chr(34) + ": " + chr(34) + "<text>" + chr(34) + chr(125)
 
             task = (
-                "You are a claim verifier. Verify the following claim using the provided sources.\n"
+                "You are a claim verifier with expertise in " + claim_type + " claims.\n"
+                "CLAIM TYPE: " + claim_type + "\n"
                 "CLAIM: " + claim + "\n"
                 "SOURCES (" + str(len(retrieved)) + " retrieved):\n" + sources_text + "\n\n"
-                "Verify: Is the claim verifiable? Is it supported or refuted by the evidence?\n"
+                "Verify the claim using these checks:\n"
+                "1. is_verifiable: Can this claim be verified with factual evidence?\n"
+                "2. verification_result: SUPPORTED, REFUTED, or UNVERIFIABLE\n"
+                "3. evidence: Extract specific quotes from sources that support/refute the claim\n"
+                "4. source_reliability: Rate source authority (0-100)\n"
+                "5. cross_reference_score: How many sources agree (0-100)\n\n"
                 "Respond ONLY in JSON: " + json_format
             )
             result = gl.nondet.exec_prompt(task)
@@ -82,25 +95,31 @@ class ClaimVerifier(gl.Contract):
 
         principle = (
             "Two results are equivalent if is_verifiable matches exactly, "
-            "verification_result matches exactly, confidence differs by at most 5 points, "
-            "evidence_found matches exactly, sources_checked matches exactly, "
-            "and sources_agreed matches exactly. "
-            "reasoning wording may differ."
+            "verification_result matches exactly, claim_type matches exactly, "
+            "confidence differs by at most 5 points, "
+            "source_reliability differs by at most 10 points, "
+            "cross_reference_score differs by at most 10 points, "
+            "sources_checked and sources_agreed match exactly. "
+            "evidence quotes may differ slightly, reasoning wording may differ."
         )
         return gl.eq_principle.prompt_comparative(gather_and_verify, principle)
 
     @gl.public.write
-    def verify_claim(self, claim: str, sources_json: str) -> str:
+    def verify_claim(self, claim: str, claim_type: str, sources_json: str) -> str:
         if not claim or not claim.strip():
             raise gl.vm.UserError("Claim is required")
+
+        claim_type = (claim_type or "FACTUAL").upper()
+        if claim_type not in self.CLAIM_TYPES:
+            claim_type = "FACTUAL"
 
         try:
             sources = json.loads(sources_json)
         except (json.JSONDecodeError, TypeError):
             raise gl.vm.UserError("Invalid sources JSON")
 
-        if not isinstance(sources, list) or len(sources) < 1:
-            raise gl.vm.UserError("At least 1 source required")
+        if not isinstance(sources, list) or len(sources) < 2:
+            raise gl.vm.UserError("At least 2 sources required for cross-referencing")
 
         for s in sources:
             if not isinstance(s, dict) or "url" not in s:
@@ -109,7 +128,7 @@ class ClaimVerifier(gl.Contract):
             if not url.startswith("http://") and not url.startswith("https://"):
                 raise gl.vm.UserError("Invalid URL: " + url)
 
-        result = self._verify_claim(claim.strip(), sources)
+        result = self._verify_claim(claim.strip(), claim_type, sources)
 
         from datetime import datetime, timezone
         self.verification_count += 1
@@ -118,12 +137,15 @@ class ClaimVerifier(gl.Contract):
         verification = Verification(
             verification_id=verification_id,
             claim=claim.strip(),
+            claim_type=claim_type,
             is_verifiable=str(result.get("is_verifiable", "false")).lower(),
             verification_result=str(result.get("verification_result", "UNVERIFIABLE")),
             confidence=str(result.get("confidence", "0")),
+            evidence=json.dumps(result.get("evidence", {})),
+            source_reliability=str(result.get("source_reliability", "0")),
+            cross_reference_score=str(result.get("cross_reference_score", "0")),
             sources_checked=str(result.get("sources_checked", 0)),
             sources_agreed=str(result.get("sources_agreed", 0)),
-            evidence_found=str(result.get("evidence_found", "none")),
             reasoning=str(result.get("reasoning", "")),
             fetched_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -139,15 +161,22 @@ class ClaimVerifier(gl.Contract):
         return self.verification_count
 
     @gl.public.view
+    def get_claim_types(self) -> list:
+        return list(self.CLAIM_TYPES)
+
+    @gl.public.view
     def get_stats(self) -> dict:
         total = 0
         supported = 0
         refuted = 0
         unverifiable = 0
+        by_type = {}
         by_result = {}
         for v in self.verifications.values():
             r = json.loads(v)
             total += 1
+            ct = r.get("claim_type", "FACTUAL")
+            by_type[ct] = by_type.get(ct, 0) + 1
             result = r.get("verification_result", "UNVERIFIABLE")
             by_result[result] = by_result.get(result, 0) + 1
             if result == "SUPPORTED":
@@ -161,5 +190,6 @@ class ClaimVerifier(gl.Contract):
             "supported": supported,
             "refuted": refuted,
             "unverifiable": unverifiable,
+            "by_type": by_type,
             "by_result": by_result,
         }

@@ -18,7 +18,9 @@ LLM_RESPONSE_SUPPORTED = json.dumps({
     "is_verifiable": "true",
     "verification_result": "SUPPORTED",
     "confidence": "85",
-    "evidence_found": "strong",
+    "evidence": {"https://source-a.com": "Bitcoin reached $60,000 in 2024."},
+    "source_reliability": "80",
+    "cross_reference_score": "90",
     "reasoning": "Multiple sources confirm the claim."
 })
 
@@ -26,7 +28,9 @@ LLM_RESPONSE_REFUTED = json.dumps({
     "is_verifiable": "true",
     "verification_result": "REFUTED",
     "confidence": "75",
-    "evidence_found": "strong",
+    "evidence": {"https://source-a.com": "Bitcoin price was $30,000."},
+    "source_reliability": "70",
+    "cross_reference_score": "60",
     "reasoning": "Sources contradict the claim."
 })
 
@@ -34,7 +38,9 @@ LLM_RESPONSE_UNVERIFIABLE = json.dumps({
     "is_verifiable": "false",
     "verification_result": "UNVERIFIABLE",
     "confidence": "0",
-    "evidence_found": "none",
+    "evidence": {},
+    "source_reliability": "0",
+    "cross_reference_score": "0",
     "reasoning": "Claim cannot be verified with available sources."
 })
 
