@@ -9,7 +9,7 @@ CONTRACT = os.path.join(
     "claim_verifier.py",
 )
 
-LLM_PATTERN = r".*claim.*verifier.*|.*verification_result.*|.*is_verifiable.*"
+LLM_PATTERN = r".*claim.*verifier.*|.*cross_validation.*|.*verification_result.*"
 
 SOURCE_A = {"method": "GET", "status": 200, "body": "Bitcoin reached $60,000 in 2024."}
 SOURCE_B = {"method": "GET", "status": 200, "body": "Bitcoin price analysis shows growth."}
@@ -20,28 +20,20 @@ LLM_RESPONSE_SUPPORTED = json.dumps({
     "confidence": "85",
     "evidence": {"https://source-a.com": "Bitcoin reached $60,000 in 2024."},
     "source_reliability": "80",
-    "cross_reference_score": "90",
+    "cross_validation": "PASS",
+    "source_agreement": "90",
     "reasoning": "Multiple sources confirm the claim."
 })
 
-LLM_RESPONSE_REFUTED = json.dumps({
+LLM_RESPONSE_FAIL_VALIDATION = json.dumps({
     "is_verifiable": "true",
-    "verification_result": "REFUTED",
-    "confidence": "75",
-    "evidence": {"https://source-a.com": "Bitcoin price was $30,000."},
-    "source_reliability": "70",
-    "cross_reference_score": "60",
-    "reasoning": "Sources contradict the claim."
-})
-
-LLM_RESPONSE_UNVERIFIABLE = json.dumps({
-    "is_verifiable": "false",
     "verification_result": "UNVERIFIABLE",
-    "confidence": "0",
-    "evidence": {},
-    "source_reliability": "0",
-    "cross_reference_score": "0",
-    "reasoning": "Claim cannot be verified with available sources."
+    "confidence": "30",
+    "evidence": {"https://source-a.com": "Bitcoin reached $60,000.", "https://source-b.com": "Bitcoin was $30,000."},
+    "source_reliability": "50",
+    "cross_validation": "FAIL",
+    "source_agreement": "30",
+    "reasoning": "Sources contradict each other."
 })
 
 

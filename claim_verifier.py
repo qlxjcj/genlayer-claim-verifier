@@ -15,7 +15,8 @@ class Verification:
     confidence: str
     evidence: str
     source_reliability: str
-    cross_reference_score: str
+    cross_validation: str
+    source_agreement: str
     sources_checked: str
     sources_agreed: str
     reasoning: str
@@ -58,7 +59,8 @@ class ClaimVerifier(gl.Contract):
                     "confidence": "0",
                     "evidence": "{}",
                     "source_reliability": "0",
-                    "cross_reference_score": "0",
+                    "cross_validation": "FAIL",
+                    "source_agreement": "0",
                     "sources_checked": len(sources),
                     "sources_agreed": 0,
                     "reasoning": "No sources could be retrieved.",
@@ -69,19 +71,20 @@ class ClaimVerifier(gl.Contract):
                 parts.append("[Source " + str(i+1) + "] " + r["url"] + ":\n" + r["data"][:500])
             sources_text = "\n".join(parts)
 
-            json_format = chr(123) + chr(34) + "is_verifiable" + chr(34) + ": " + chr(34) + "true" + chr(34) + "|" + chr(34) + "false" + chr(34) + ", " + chr(34) + "verification_result" + chr(34) + ": " + chr(34) + "SUPPORTED" + chr(34) + "|" + chr(34) + "REFUTED" + chr(34) + "|" + chr(34) + "UNVERIFIABLE" + chr(34) + ", " + chr(34) + "confidence" + chr(34) + ": " + chr(34) + "<0-100>" + chr(34) + ", " + chr(34) + "evidence" + chr(34) + ": " + chr(123) + chr(34) + "<source>" + chr(34) + ": " + chr(34) + "<quote>" + chr(34) + chr(125) + ", " + chr(34) + "source_reliability" + chr(34) + ": " + chr(34) + "<0-100>" + chr(34) + ", " + chr(34) + "cross_reference_score" + chr(34) + ": " + chr(34) + "<0-100>" + chr(34) + ", " + chr(34) + "reasoning" + chr(34) + ": " + chr(34) + "<text>" + chr(34) + chr(125)
+            json_format = chr(123) + chr(34) + "is_verifiable" + chr(34) + ": " + chr(34) + "true" + chr(34) + "|" + chr(34) + "false" + chr(34) + ", " + chr(34) + "verification_result" + chr(34) + ": " + chr(34) + "SUPPORTED" + chr(34) + "|" + chr(34) + "REFUTED" + chr(34) + "|" + chr(34) + "UNVERIFIABLE" + chr(34) + ", " + chr(34) + "confidence" + chr(34) + ": " + chr(34) + "<0-100>" + chr(34) + ", " + chr(34) + "evidence" + chr(34) + ": " + chr(123) + chr(34) + "<source>" + chr(34) + ": " + chr(34) + "<quote>" + chr(34) + chr(125) + ", " + chr(34) + "source_reliability" + chr(34) + ": " + chr(34) + "<0-100>" + chr(34) + ", " + chr(34) + "cross_validation" + chr(34) + ": " + chr(34) + "PASS" + chr(34) + "|" + chr(34) + "FAIL" + chr(34) + "|" + chr(34) + "PARTIAL" + chr(34) + ", " + chr(34) + "source_agreement" + chr(34) + ": " + chr(34) + "<0-100>" + chr(34) + ", " + chr(34) + "reasoning" + chr(34) + ": " + chr(34) + "<text>" + chr(34) + chr(125)
 
             task = (
-                "You are a claim verifier with expertise in " + claim_type + " claims.\n"
+                "You are a claim verifier with cross-validation capabilities.\n"
                 "CLAIM TYPE: " + claim_type + "\n"
                 "CLAIM: " + claim + "\n"
                 "SOURCES (" + str(len(retrieved)) + " retrieved):\n" + sources_text + "\n\n"
-                "Verify the claim using these checks:\n"
+                "INSTRUCTIONS:\n"
                 "1. is_verifiable: Can this claim be verified with factual evidence?\n"
                 "2. verification_result: SUPPORTED, REFUTED, or UNVERIFIABLE\n"
-                "3. evidence: Extract specific quotes from sources that support/refute the claim\n"
+                "3. evidence: Extract specific quotes from each source that support/refute the claim\n"
                 "4. source_reliability: Rate source authority (0-100)\n"
-                "5. cross_reference_score: How many sources agree (0-100)\n\n"
+                "5. cross_validation: Compare evidence between sources - PASS if agree, FAIL if contradict, PARTIAL if partial\n"
+                "6. source_agreement: percentage of sources that agree (0-100)\n\n"
                 "Respond ONLY in JSON: " + json_format
             )
             result = gl.nondet.exec_prompt(task)
@@ -96,11 +99,13 @@ class ClaimVerifier(gl.Contract):
         principle = (
             "Two results are equivalent if is_verifiable matches exactly, "
             "verification_result matches exactly, claim_type matches exactly, "
+            "cross_validation matches exactly, "
             "confidence differs by at most 5 points, "
             "source_reliability differs by at most 10 points, "
-            "cross_reference_score differs by at most 10 points, "
+            "source_agreement differs by at most 10 points, "
+            "evidence quotes may differ slightly, "
             "sources_checked and sources_agreed match exactly. "
-            "evidence quotes may differ slightly, reasoning wording may differ."
+            "reasoning wording may differ."
         )
         return gl.eq_principle.prompt_comparative(gather_and_verify, principle)
 
@@ -119,7 +124,7 @@ class ClaimVerifier(gl.Contract):
             raise gl.vm.UserError("Invalid sources JSON")
 
         if not isinstance(sources, list) or len(sources) < 2:
-            raise gl.vm.UserError("At least 2 sources required for cross-referencing")
+            raise gl.vm.UserError("At least 2 sources required for cross-validation")
 
         for s in sources:
             if not isinstance(s, dict) or "url" not in s:
@@ -143,7 +148,8 @@ class ClaimVerifier(gl.Contract):
             confidence=str(result.get("confidence", "0")),
             evidence=json.dumps(result.get("evidence", {})),
             source_reliability=str(result.get("source_reliability", "0")),
-            cross_reference_score=str(result.get("cross_reference_score", "0")),
+            cross_validation=str(result.get("cross_validation", "FAIL")),
+            source_agreement=str(result.get("source_agreement", "0")),
             sources_checked=str(result.get("sources_checked", 0)),
             sources_agreed=str(result.get("sources_agreed", 0)),
             reasoning=str(result.get("reasoning", "")),
@@ -170,6 +176,7 @@ class ClaimVerifier(gl.Contract):
         supported = 0
         refuted = 0
         unverifiable = 0
+        cross_valid = 0
         by_type = {}
         by_result = {}
         for v in self.verifications.values():
@@ -185,11 +192,14 @@ class ClaimVerifier(gl.Contract):
                 refuted += 1
             else:
                 unverifiable += 1
+            if r.get("cross_validation") == "PASS":
+                cross_valid += 1
         return {
             "total": total,
             "supported": supported,
             "refuted": refuted,
             "unverifiable": unverifiable,
+            "cross_validated": cross_valid,
             "by_type": by_type,
             "by_result": by_result,
         }

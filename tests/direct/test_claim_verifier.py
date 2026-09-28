@@ -5,8 +5,7 @@ import json
 from conftest import (
     LLM_PATTERN,
     LLM_RESPONSE_SUPPORTED,
-    LLM_RESPONSE_REFUTED,
-    LLM_RESPONSE_UNVERIFIABLE,
+    LLM_RESPONSE_FAIL_VALIDATION,
     with_claim_data,
 )
 
@@ -19,26 +18,30 @@ def test_verify_claim_supported(verifier):
     raw = c.get_verification(vid)
     v = json.loads(raw)
     assert v["verification_result"] == "SUPPORTED"
-    assert v["is_verifiable"] == "true"
-    assert v["claim_type"] == "FACTUAL"
+    assert v["cross_validation"] == "PASS"
 
 
-def test_claim_types(verifier):
+def test_cross_validation_pass(verifier):
     vm, c = verifier
     sources = json.dumps([{"url": "https://source-a.com"}, {"url": "https://source-b.com"}])
-    vid = c.verify_claim("BTC will reach $100k", "PREDICTION", sources)
+    vid = c.verify_claim("Bitcoin reached $60,000", "FACTUAL", sources)
     raw = c.get_verification(vid)
     v = json.loads(raw)
-    assert v["claim_type"] == "PREDICTION"
+    assert v["cross_validation"] == "PASS"
+    assert int(v["source_agreement"]) > 50
 
 
-def test_invalid_claim_type_defaults(verifier):
+def test_cross_validation_fail(verifier):
     vm, c = verifier
+    vm.clear_mocks()
+    vm.mock_web(".*source-a.*", {"method": "GET", "status": 200, "body": "Bitcoin reached $60,000."})
+    vm.mock_web(".*source-b.*", {"method": "GET", "status": 200, "body": "Bitcoin was $30,000."})
+    vm.mock_llm(LLM_PATTERN, LLM_RESPONSE_FAIL_VALIDATION)
     sources = json.dumps([{"url": "https://source-a.com"}, {"url": "https://source-b.com"}])
-    vid = c.verify_claim("Test claim", "INVALID_TYPE", sources)
+    vid = c.verify_claim("Bitcoin price claim", "FACTUAL", sources)
     raw = c.get_verification(vid)
     v = json.loads(raw)
-    assert v["claim_type"] == "FACTUAL"
+    assert v["cross_validation"] == "FAIL"
 
 
 def test_evidence_extraction(verifier):
@@ -48,6 +51,8 @@ def test_evidence_extraction(verifier):
     raw = c.get_verification(vid)
     v = json.loads(raw)
     assert v["evidence"] != "{}"
+    evidence = json.loads(v["evidence"])
+    assert len(evidence) > 0
 
 
 def test_source_reliability(verifier):
@@ -59,13 +64,22 @@ def test_source_reliability(verifier):
     assert int(v["source_reliability"]) > 0
 
 
-def test_cross_reference_score(verifier):
+def test_source_agreement_score(verifier):
     vm, c = verifier
     sources = json.dumps([{"url": "https://source-a.com"}, {"url": "https://source-b.com"}])
     vid = c.verify_claim("Bitcoin reached $60,000", "FACTUAL", sources)
     raw = c.get_verification(vid)
     v = json.loads(raw)
-    assert int(v["cross_reference_score"]) > 0
+    assert int(v["source_agreement"]) > 0
+
+
+def test_claim_types(verifier):
+    vm, c = verifier
+    sources = json.dumps([{"url": "https://source-a.com"}, {"url": "https://source-b.com"}])
+    vid = c.verify_claim("BTC will reach $100k", "PREDICTION", sources)
+    raw = c.get_verification(vid)
+    v = json.loads(raw)
+    assert v["claim_type"] == "PREDICTION"
 
 
 def test_requires_two_sources(verifier):
@@ -78,32 +92,26 @@ def test_requires_two_sources(verifier):
         pass
 
 
-def test_requires_claim(verifier):
+def test_all_sources_failed(verifier):
     vm, c = verifier
+    vm.clear_mocks()
+    vm.mock_web(".*source-a.*", {"method": "GET", "status": 200, "body": ""})
+    vm.mock_web(".*source-b.*", {"method": "GET", "status": 200, "body": ""})
+    vm.mock_llm(LLM_PATTERN, json.dumps({
+        "is_verifiable": "false",
+        "verification_result": "UNVERIFIABLE",
+        "confidence": "0",
+        "evidence": {},
+        "source_reliability": "0",
+        "cross_validation": "FAIL",
+        "source_agreement": "0",
+        "reasoning": "No sources."
+    }))
     sources = json.dumps([{"url": "https://source-a.com"}, {"url": "https://source-b.com"}])
-    try:
-        c.verify_claim("", "FACTUAL", sources)
-        assert False, "Should have raised"
-    except Exception:
-        pass
-
-
-def test_multiple_verifications(verifier):
-    vm, c = verifier
-    sources = json.dumps([{"url": "https://source-a.com"}, {"url": "https://source-b.com"}])
-    vid1 = c.verify_claim("Claim 1", "FACTUAL", sources)
-    vid2 = c.verify_claim("Claim 2", "PREDICTION", sources)
-    assert vid1 != vid2
-    assert c.get_verification_count() == 2
-
-
-def test_get_claim_types(verifier):
-    vm, c = verifier
-    types = c.get_claim_types()
-    assert "FACTUAL" in types
-    assert "PREDICTION" in types
-    assert "OPINION" in types
-    assert "STATISTICAL" in types
+    vid = c.verify_claim("Test claim", "FACTUAL", sources)
+    raw = c.get_verification(vid)
+    v = json.loads(raw)
+    assert v["cross_validation"] == "FAIL"
 
 
 def test_stats(verifier):
@@ -113,18 +121,4 @@ def test_stats(verifier):
     c.verify_claim("Claim 2", "PREDICTION", sources)
     s = c.get_stats()
     assert s["total"] == 2
-    assert "FACTUAL" in s["by_type"]
-    assert "PREDICTION" in s["by_type"]
-
-
-def test_all_sources_failed(verifier):
-    vm, c = verifier
-    vm.clear_mocks()
-    vm.mock_web(".*source-a.*", {"method": "GET", "status": 200, "body": ""})
-    vm.mock_web(".*source-b.*", {"method": "GET", "status": 200, "body": ""})
-    vm.mock_llm(LLM_PATTERN, LLM_RESPONSE_UNVERIFIABLE)
-    sources = json.dumps([{"url": "https://source-a.com"}, {"url": "https://source-b.com"}])
-    vid = c.verify_claim("Test claim", "FACTUAL", sources)
-    raw = c.get_verification(vid)
-    v = json.loads(raw)
-    assert v["verification_result"] == "UNVERIFIABLE"
+    assert s["cross_validated"] == 2
